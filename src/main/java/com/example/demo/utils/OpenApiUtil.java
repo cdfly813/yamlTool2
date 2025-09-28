@@ -138,14 +138,14 @@ public class OpenApiUtil {
         private String path;
         private String method;
         private PathRequest request;
-        private PathResponse response; // Note: This assumes one response per operation for simplicity; adjust if multiple are needed
+        private List<PathResponse> responses; // Changed to list of all responses
 
         // Constructors, getters, setters
-        public ApiOperation(String path, String method, PathRequest request, PathResponse response) {
+        public ApiOperation(String path, String method, PathRequest request, List<PathResponse> responses) {
             this.path = path;
             this.method = method;
             this.request = request;
-            this.response = response;
+            this.responses = responses;
         }
 
         public String getPath() { return path; }
@@ -154,8 +154,8 @@ public class OpenApiUtil {
         public void setMethod(String method) { this.method = method; }
         public PathRequest getRequest() { return request; }
         public void setRequest(PathRequest request) { this.request = request; }
-        public PathResponse getResponse() { return response; }
-        public void setResponse(PathResponse response) { this.response = response; }
+        public List<PathResponse> getResponses() { return responses; }
+        public void setResponses(List<PathResponse> responses) { this.responses = responses; }
     }
 
     private static List<ApiOperation> parseOpenAPI(OpenAPI openAPI) {
@@ -176,21 +176,19 @@ public class OpenApiUtil {
 
                 PathRequest req = parseRequest(httpMethod, op, openAPI);
 
-                // Assuming one response for simplicity (e.g., 200); adjust to handle multiple if needed
-                PathResponse res = null;
-                if (op.getResponses() != null && !op.getResponses().isEmpty()) {
-                    // Take the first response or handle all; here taking "200" if exists, else first
-                    ApiResponse apiResp = op.getResponses().get("200");
-                    if (apiResp == null) {
-                        apiResp = op.getResponses().values().iterator().next();
+                List<PathResponse> resList = new ArrayList<>();
+                if (op.getResponses() != null) {
+                    for (Map.Entry<String, ApiResponse> rEntry : op.getResponses().entrySet()) {
+                        String code = rEntry.getKey();
+                        ApiResponse resolvedResp = resolveApiResponse(openAPI, rEntry.getValue());
+                        PathResponse res = parseResponse(code, resolvedResp, openAPI);
+                        resList.add(res);
                     }
-                    ApiResponse resolvedResp = resolveApiResponse(openAPI, apiResp);
-                    res = parseResponse("200", resolvedResp, openAPI); // Use actual code if needed
                 } else {
-                    res = new PathResponse("200", new ArrayList<>(), null);
+                    resList.add(new PathResponse("default", new ArrayList<>(), null));
                 }
 
-                result.add(new ApiOperation(path, httpMethod.name().toLowerCase(), req, res));
+                result.add(new ApiOperation(path, httpMethod.name().toLowerCase(), req, resList));
             }
         }
 
