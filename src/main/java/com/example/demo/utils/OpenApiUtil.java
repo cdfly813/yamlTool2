@@ -24,15 +24,43 @@ import com.example.demo.entity.ApiParameter;
 public class OpenApiUtil {
 
     private static Schema mapToCustomSchema(OpenAPI openAPI, io.swagger.v3.oas.models.media.Schema<?> swaggerSchema) {
+        return mapToCustomSchema(openAPI, swaggerSchema, new HashMap<>());
+    }
+
+    private static Schema mapToCustomSchema(OpenAPI openAPI, io.swagger.v3.oas.models.media.Schema<?> swaggerSchema, Map<String, Schema> cache) {
         if (swaggerSchema == null) return null;
 
         if (swaggerSchema.get$ref() != null) {
             String ref = swaggerSchema.get$ref();
             String schemaName = ref.substring(ref.lastIndexOf('/') + 1);
+
+            // Check cache first to avoid recursion
+            if (cache.containsKey(schemaName)) {
+                return cache.get(schemaName);
+            }
+
             io.swagger.v3.oas.models.media.Schema<?> refSchema = openAPI.getComponents().getSchemas().get(schemaName);
             if (refSchema != null) {
-                // Recursively resolve the referenced schema
-                return mapToCustomSchema(openAPI, refSchema);
+                // Put a placeholder to detect cycles
+                Schema placeholder = new Schema();
+                cache.put(schemaName, placeholder);
+
+                Schema resolved = mapToCustomSchema(openAPI, refSchema, cache);
+
+                // Update the cache with the resolved schema
+                placeholder.setType(resolved.getType());
+                placeholder.setFormat(resolved.getFormat());
+                placeholder.setDescription(resolved.getDescription());
+                placeholder.setPattern(resolved.getPattern());
+                placeholder.setMinLength(resolved.getMinLength());
+                placeholder.setMaxLength(resolved.getMaxLength());
+                placeholder.setExample(resolved.getExample());
+                placeholder.setProperties(resolved.getProperties());
+                placeholder.setItems(resolved.getItems());
+                placeholder.setAllOf(resolved.getAllOf());
+                placeholder.setOneOf(resolved.getOneOf());
+
+                return placeholder;
             } else {
                 throw new RuntimeException("Unresolved schema reference: " + ref);
             }
@@ -50,19 +78,19 @@ public class OpenApiUtil {
         // Handle properties recursively
         if (swaggerSchema.getProperties() != null) {
             schema.setProperties(swaggerSchema.getProperties().entrySet().stream()
-                    .collect(Collectors.toMap(Map.Entry::getKey, e -> mapToCustomSchema(openAPI, e.getValue()))));
+                    .collect(Collectors.toMap(Map.Entry::getKey, e -> mapToCustomSchema(openAPI, e.getValue(), cache))));
         }
 
         // Handle array items recursively
         if (swaggerSchema instanceof ArraySchema) {
-            schema.setItems(mapToCustomSchema(openAPI, ((ArraySchema) swaggerSchema).getItems()));
+            schema.setItems(mapToCustomSchema(openAPI, ((ArraySchema) swaggerSchema).getItems(), cache));
         }
 
         // Handle allOf by merging properties recursively
         if (swaggerSchema.getAllOf() != null && !swaggerSchema.getAllOf().isEmpty()) {
             Map<String, Schema> mergedProperties = new HashMap<>();
             for (io.swagger.v3.oas.models.media.Schema<?> allOfSchema : swaggerSchema.getAllOf()) {
-                Schema resolved = mapToCustomSchema(openAPI, allOfSchema);
+                Schema resolved = mapToCustomSchema(openAPI, allOfSchema, cache);
                 if (resolved.getProperties() != null) {
                     mergedProperties.putAll(resolved.getProperties());
                 }
@@ -73,7 +101,7 @@ public class OpenApiUtil {
 
         // Handle oneOf (not merging, as it's a union - you may need custom logic based on use case)
         if (swaggerSchema.getOneOf() != null) {
-            schema.setOneOf(swaggerSchema.getOneOf().stream().map(s -> mapToCustomSchema(openAPI, s)).collect(Collectors.toList()));
+            schema.setOneOf(swaggerSchema.getOneOf().stream().map(s -> mapToCustomSchema(openAPI, s, cache)).collect(Collectors.toList()));
         }
 
         // Add more mappings as needed (e.g., anyOf, not, etc.)
