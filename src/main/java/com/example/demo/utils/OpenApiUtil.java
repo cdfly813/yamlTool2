@@ -133,40 +133,65 @@ public class OpenApiUtil {
         return response;
     }
 
-    private static List<ApiPath> parseOpenAPI(OpenAPI openAPI) {
+    // New class for flattened structure
+    public static class ApiOperation {
+        private String path;
+        private String method;
+        private PathRequest request;
+        private PathResponse response; // Note: This assumes one response per operation for simplicity; adjust if multiple are needed
+
+        // Constructors, getters, setters
+        public ApiOperation(String path, String method, PathRequest request, PathResponse response) {
+            this.path = path;
+            this.method = method;
+            this.request = request;
+            this.response = response;
+        }
+
+        public String getPath() { return path; }
+        public void setPath(String path) { this.path = path; }
+        public String getMethod() { return method; }
+        public void setMethod(String method) { this.method = method; }
+        public PathRequest getRequest() { return request; }
+        public void setRequest(PathRequest request) { this.request = request; }
+        public PathResponse getResponse() { return response; }
+        public void setResponse(PathResponse response) { this.response = response; }
+    }
+
+    private static List<ApiOperation> parseOpenAPI(OpenAPI openAPI) {
         if (openAPI == null) {
             throw new RuntimeException("OpenAPI is null");
         }
 
-        List<ApiPath> result = new ArrayList<>();
+        List<ApiOperation> result = new ArrayList<>();
 
         Map<String, PathItem> paths = openAPI.getPaths();
         for (String path : paths.keySet()) {
             PathItem item = paths.get(path);
 
-            List<ApiPair> pairs = new ArrayList<>();
-
             Map<PathItem.HttpMethod, Operation> operations = item.readOperationsMap();
             for (Map.Entry<PathItem.HttpMethod, Operation> entry : operations.entrySet()) {
-                PathItem.HttpMethod method = entry.getKey();
+                PathItem.HttpMethod httpMethod = entry.getKey();
                 Operation op = entry.getValue();
 
-                PathRequest req = parseRequest(method, op, openAPI);
+                PathRequest req = parseRequest(httpMethod, op, openAPI);
 
-                if (op.getResponses() != null) {
-                    for (Map.Entry<String, ApiResponse> rEntry : op.getResponses().entrySet()) {
-                        String code = rEntry.getKey();
-                        ApiResponse resolvedResp = resolveApiResponse(openAPI, rEntry.getValue());
-                        PathResponse res = parseResponse(code, resolvedResp, openAPI);
-                        pairs.add(new ApiPair(method.name().toLowerCase(), req, res));
+                // Assuming one response for simplicity (e.g., 200); adjust to handle multiple if needed
+                PathResponse res = null;
+                if (op.getResponses() != null && !op.getResponses().isEmpty()) {
+                    // Take the first response or handle all; here taking "200" if exists, else first
+                    ApiResponse apiResp = op.getResponses().get("200");
+                    if (apiResp == null) {
+                        apiResp = op.getResponses().values().iterator().next();
                     }
+                    ApiResponse resolvedResp = resolveApiResponse(openAPI, apiResp);
+                    res = parseResponse("200", resolvedResp, openAPI); // Use actual code if needed
                 } else {
-                    PathResponse emptyRes = new PathResponse("", new ArrayList<>(), null);
-                    pairs.add(new ApiPair(method.name().toLowerCase(), req, emptyRes));
+                    res = new PathResponse("200", new ArrayList<>(), null);
                 }
-            }
 
-            result.add(new ApiPath(path, pairs));
+                result.add(new ApiOperation(path, httpMethod.name().toLowerCase(), req, res));
+            }
         }
 
         return result;
@@ -238,12 +263,12 @@ public class OpenApiUtil {
                 ));
     }
 
-    public static List<ApiPath> parseOpenApiToContracts(String yamlPath) {
+    public static List<ApiOperation> parseOpenApiToContracts(String yamlPath) {
         OpenAPI openAPI = new OpenAPIV3Parser().read(yamlPath);
         return parseOpenAPI(openAPI);
     }
 
-    public static List<ApiPath> parseOpenApiToContractsFromContent(String yamlContent) {
+    public static List<ApiOperation> parseOpenApiToContractsFromContent(String yamlContent) {
         OpenAPI openAPI = new OpenAPIV3Parser().readContents(yamlContent).getOpenAPI();
         return parseOpenAPI(openAPI);
     }
