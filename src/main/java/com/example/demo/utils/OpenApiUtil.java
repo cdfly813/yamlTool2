@@ -109,6 +109,30 @@ public class OpenApiUtil {
         return schema;
     }
 
+    private static PathRequest parseRequest(PathItem.HttpMethod method, Operation op, OpenAPI openAPI) {
+        List<ApiParameter> parameters = parseRequestParameters(op.getParameters(), openAPI);
+
+        RequestBody body = parseRequestBody(op.getRequestBody(), openAPI);
+
+        return new PathRequest(method.name().toLowerCase(), parameters, body);
+    }
+
+    // New method to resolve ApiResponse if it's a reference
+    private static ApiResponse resolveApiResponse(OpenAPI openAPI, ApiResponse response) {
+        if (response.get$ref() != null) {
+            String ref = response.get$ref();
+            String responseName = ref.substring(ref.lastIndexOf('/') + 1);
+            ApiResponse refResponse = openAPI.getComponents().getResponses().get(responseName);
+            if (refResponse != null) {
+                // Recurse in case of nested refs (though rare)
+                return resolveApiResponse(openAPI, refResponse);
+            } else {
+                throw new RuntimeException("Unresolved response reference: " + ref);
+            }
+        }
+        return response;
+    }
+
     private static List<ApiPath> parseOpenAPI(OpenAPI openAPI) {
         if (openAPI == null) {
             throw new RuntimeException("OpenAPI is null");
@@ -132,9 +156,8 @@ public class OpenApiUtil {
                 if (op.getResponses() != null) {
                     for (Map.Entry<String, ApiResponse> rEntry : op.getResponses().entrySet()) {
                         String code = rEntry.getKey();
-                        ApiResponse resp = rEntry.getValue();
-
-                        PathResponse res = parseResponse(code, resp, openAPI);
+                        ApiResponse resolvedResp = resolveApiResponse(openAPI, rEntry.getValue());
+                        PathResponse res = parseResponse(code, resolvedResp, openAPI);
                         pairs.add(new ApiPair(method.name().toLowerCase(), req, res));
                     }
                 } else {
@@ -147,14 +170,6 @@ public class OpenApiUtil {
         }
 
         return result;
-    }
-
-    private static PathRequest parseRequest(PathItem.HttpMethod method, Operation op, OpenAPI openAPI) {
-        List<ApiParameter> parameters = parseRequestParameters(op.getParameters(), openAPI);
-
-        RequestBody body = parseRequestBody(op.getRequestBody(), openAPI);
-
-        return new PathRequest(method.name().toLowerCase(), parameters, body);
     }
 
     private static List<ApiParameter> parseRequestParameters(List<io.swagger.v3.oas.models.parameters.Parameter> swaggerParams, OpenAPI openAPI) {
