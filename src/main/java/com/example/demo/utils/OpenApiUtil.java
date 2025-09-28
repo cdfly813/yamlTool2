@@ -31,6 +31,7 @@ public class OpenApiUtil {
             String schemaName = ref.substring(ref.lastIndexOf('/') + 1);
             io.swagger.v3.oas.models.media.Schema<?> refSchema = openAPI.getComponents().getSchemas().get(schemaName);
             if (refSchema != null) {
+                // Recursively resolve the referenced schema
                 return mapToCustomSchema(openAPI, refSchema);
             } else {
                 throw new RuntimeException("Unresolved schema reference: " + ref);
@@ -46,24 +47,36 @@ public class OpenApiUtil {
         schema.setMaxLength(swaggerSchema.getMaxLength());
         schema.setExample(swaggerSchema.getExample());
 
+        // Handle properties recursively
         if (swaggerSchema.getProperties() != null) {
             schema.setProperties(swaggerSchema.getProperties().entrySet().stream()
-                .collect(Collectors.toMap(Map.Entry::getKey, e -> mapToCustomSchema(openAPI, e.getValue()))));
+                    .collect(Collectors.toMap(Map.Entry::getKey, e -> mapToCustomSchema(openAPI, e.getValue()))));
         }
 
+        // Handle array items recursively
         if (swaggerSchema instanceof ArraySchema) {
             schema.setItems(mapToCustomSchema(openAPI, ((ArraySchema) swaggerSchema).getItems()));
         }
 
-        if (swaggerSchema.getAllOf() != null) {
-            schema.setAllOf(swaggerSchema.getAllOf().stream().map(s -> mapToCustomSchema(openAPI, s)).collect(Collectors.toList()));
+        // Handle allOf by merging properties recursively
+        if (swaggerSchema.getAllOf() != null && !swaggerSchema.getAllOf().isEmpty()) {
+            Map<String, Schema> mergedProperties = new HashMap<>();
+            for (io.swagger.v3.oas.models.media.Schema<?> allOfSchema : swaggerSchema.getAllOf()) {
+                Schema resolved = mapToCustomSchema(openAPI, allOfSchema);
+                if (resolved.getProperties() != null) {
+                    mergedProperties.putAll(resolved.getProperties());
+                }
+            }
+            schema.setProperties(mergedProperties);
+            // Note: For simplicity, we're merging properties here. Handle other fields if needed (e.g., required).
         }
 
+        // Handle oneOf (not merging, as it's a union - you may need custom logic based on use case)
         if (swaggerSchema.getOneOf() != null) {
             schema.setOneOf(swaggerSchema.getOneOf().stream().map(s -> mapToCustomSchema(openAPI, s)).collect(Collectors.toList()));
         }
 
-        // Add more mappings as needed
+        // Add more mappings as needed (e.g., anyOf, not, etc.)
 
         return schema;
     }
@@ -135,14 +148,14 @@ public class OpenApiUtil {
 
         if (rb.getContent() != null) {
             Map<String, MediaType> content = rb.getContent().entrySet().stream()
-                .collect(Collectors.toMap(
-                    Map.Entry::getKey,
-                    e -> {
-                        MediaType mt = new MediaType();
-                        mt.setSchema(mapToCustomSchema(openAPI, e.getValue().getSchema()));
-                        return mt;
-                    }
-                ));
+                    .collect(Collectors.toMap(
+                            Map.Entry::getKey,
+                            e -> {
+                                MediaType mt = new MediaType();
+                                mt.setSchema(mapToCustomSchema(openAPI, e.getValue().getSchema()));
+                                return mt;
+                            }
+                    ));
             body.setContent(content);
         }
 
@@ -172,14 +185,14 @@ public class OpenApiUtil {
         if (swaggerContent == null) return null;
 
         return swaggerContent.entrySet().stream()
-            .collect(Collectors.toMap(
-                Map.Entry::getKey,
-                e -> {
-                    MediaType mt = new MediaType();
-                    mt.setSchema(mapToCustomSchema(openAPI, e.getValue().getSchema()));
-                    return mt;
-                }
-            ));
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> {
+                            MediaType mt = new MediaType();
+                            mt.setSchema(mapToCustomSchema(openAPI, e.getValue().getSchema()));
+                            return mt;
+                        }
+                ));
     }
 
     public static List<ApiPath> parseOpenApiToContracts(String yamlPath) {
